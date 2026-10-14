@@ -14,7 +14,7 @@ import (
 
 func usage() string {
 	return `Usage:
-	teamcity-go-test -test <binary> [-parallelism n] [-timeout t]
+	teamcity-go-test -test <binary> [-parallelism n] [-timeout t] [-parallel-tests]
 
 	Test names must be listed one per line on stdin.
 `
@@ -24,6 +24,7 @@ func main() {
 	testBinary := flag.String("test", "", "executable containing the tests to run")
 	parallelism := flag.Int("parallelism", 1, "number of tests to execute in parallel")
 	timeout := flag.String("timeout", "", "an optional per-test timeout")
+	parallelTests := flag.Bool("parallel-tests", false, "support TeamCity Parallel Tests: run only this batch's tests and report them as TestName.run so TeamCity can batch by test function")
 	flag.Parse()
 
 	if testBinary == nil || *testBinary == "" {
@@ -44,7 +45,7 @@ func main() {
 		if err != nil {
 			if err == io.EOF {
 				if strings.TrimSpace(line) != "" {
-					testNames = append(testNames, line)
+					testNames = append(testNames, strings.TrimSpace(line))
 				}
 				break
 			}
@@ -53,8 +54,22 @@ func main() {
 		}
 
 		if strings.TrimSpace(line) != "" {
-			testNames = append(testNames, line)
+			testNames = append(testNames, strings.TrimSpace(line))
 		}
+	}
+
+	if *parallelTests {
+		batch, err := batchTests(testNames)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", err)
+			os.Exit(1)
+		}
+		testNames = batch
+	}
+
+	if len(testNames) == 0 {
+		fmt.Println("No tests to run")
+		return
 	}
 
 	testQueue := make(chan string)
@@ -62,12 +77,12 @@ func main() {
 	completed := make(chan struct{})
 
 	for i := 0; i < *parallelism; i++ {
-		go runWorker(testQueue, messages, completed, *testBinary, *timeout)
+		go runWorker(testQueue, messages, completed, *testBinary, *timeout, *parallelTests)
 	}
 
 	go func() {
 		for _, testName := range testNames {
-			testQueue <- strings.TrimSpace(testName)
+			testQueue <- testName
 		}
 	}()
 
@@ -86,11 +101,12 @@ func main() {
 	}
 }
 
-func runWorker(inputQueue <-chan string, messages chan<- string, done chan<- struct{}, binaryName, timeout string) {
+func runWorker(inputQueue <-chan string, messages chan<- string, done chan<- struct{}, binaryName, timeout string, parallelTests bool) {
 	for {
 		select {
 		case testName := <-inputQueue:
 			test := NewTeamCityTest(testName)
+			test.ParallelTestNames = parallelTests
 			//messages <- fmt.Sprintf("%s", test.FormatStartNotice())
 			runTest(test, binaryName, timeout)
 			messages <- test.FormatTestOutput()

@@ -30,13 +30,23 @@ var (
 type TeamCityTest struct {
 	Name, Output, ErrOutput, Duration string
 	Race, Fail, Skip, Pass            bool
-	Started time.Time
+	ParallelTestNames                 bool
+	Started                           time.Time
 }
 
 func NewTeamCityTest(testName string) *TeamCityTest {
 	return &TeamCityTest{
 		Name: testName,
 	}
+}
+
+// ReportedName is the name reported to TeamCity. TeamCity Parallel Tests batches by test class (the text
+// before the last '.'), so ParallelTestNames makes each Go test function its own class.
+func (test *TeamCityTest) ReportedName() string {
+	if test.ParallelTestNames {
+		return test.Name + ".run"
+	}
+	return test.Name
 }
 
 func (test *TeamCityTest) ParseTestRunnerOutput(testOutput string, errOutput string) {
@@ -66,38 +76,39 @@ func (test *TeamCityTest) ParseTestRunnerOutput(testOutput string, errOutput str
 
 func (test *TeamCityTest) FormatTestOutput() string {
 	now := time.Now().Format(TeamCityTimestampFormat)
+	name := test.ReportedName()
 
 	var output bytes.Buffer
 
-	output.WriteString(fmt.Sprintf(TeamCityTestStarted, test.Started.Format(TeamCityTimestampFormat), test.Name))
+	output.WriteString(fmt.Sprintf(TeamCityTestStarted, test.Started.Format(TeamCityTimestampFormat), name))
 
-	output.WriteString(fmt.Sprintf(TeamCityTestStdOut, test.Name, escapeOutput(test.Output)))
-	output.WriteString(fmt.Sprintf(TeamCityTestStdErr, test.Name, escapeOutput(test.ErrOutput)))
+	output.WriteString(fmt.Sprintf(TeamCityTestStdOut, name, escapeOutput(test.Output)))
+	output.WriteString(fmt.Sprintf(TeamCityTestStdErr, name, escapeOutput(test.ErrOutput)))
 
 	if test.Fail {
-		output.WriteString(fmt.Sprintf(TeamCityTestFailed, now, test.Name))
-		output.WriteString(fmt.Sprintf(TeamCityTestFinished, now, test.Name))
+		output.WriteString(fmt.Sprintf(TeamCityTestFailed, now, name))
+		output.WriteString(fmt.Sprintf(TeamCityTestFinished, now, name))
 		return output.String()
 	}
 
 	if test.Race {
-		output.WriteString(fmt.Sprintf(TeamCityTestFailedRace, now, test.Name))
-		output.WriteString(fmt.Sprintf(TeamCityTestFinished, now, test.Name))
+		output.WriteString(fmt.Sprintf(TeamCityTestFailedRace, now, name))
+		output.WriteString(fmt.Sprintf(TeamCityTestFinished, now, name))
 		return output.String()
 	}
 
 	if test.Skip {
-		output.WriteString(fmt.Sprintf(TeamCityTestIgnored, now, test.Name))
+		output.WriteString(fmt.Sprintf(TeamCityTestIgnored, now, name))
 		return output.String()
 	}
 
 	if test.Pass {
-		output.WriteString(fmt.Sprintf(TeamCityTestFinished, now, test.Name))
+		output.WriteString(fmt.Sprintf(TeamCityTestFinished, now, name))
 		return output.String()
 	}
 
-	output.WriteString(fmt.Sprintf(TeamCityTestFailedPanic, now, test.Name))
-	output.WriteString(fmt.Sprintf(TeamCityTestFinished, now, test.Name))
+	output.WriteString(fmt.Sprintf(TeamCityTestFailedPanic, now, name))
+	output.WriteString(fmt.Sprintf(TeamCityTestFinished, now, name))
 
 	return output.String()
 }
